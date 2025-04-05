@@ -93,7 +93,7 @@ tensorboard==2.18.0
 tensorboard-data-server==0.7.2
 tensorflow==2.18.0
 tensorflow-io-gcs-filesystem==0.31.0
-tensorflow_intel==2.18.0
+tensorflow==2.15.0
 termcolor==2.5.0
 threadpoolctl==3.6.0
 typing-inspection==0.4.0
