@@ -1,0 +1,36 @@
+ User Interface Flow
+1️⃣ 📜 Login / Dashboard Access
+
+User logs in (or directly accesses the dashboard).
+
+Quick overview of call costs, usage, and analytics.
+
+2️⃣ 🔮 Call Cost Prediction
+
+User inputs call details (Caller ID, Receiver ID, Duration, Carrier, Time of Day).
+
+Clicks “Predict Cost” button.
+
+AI predicts call cost in real-time and displays results.
+
+3️⃣ 📊 Analytics Dashboard
+
+Displays cost trends, carrier-wise analysis, and peak usage hours.
+
+Charts & Graphs (Recharts) for better insights.
+
+4️⃣ 📜 Call History & Cost Tracking
+
+Table showing past calls, costs, and carriers used.
+
+Users can filter/search calls based on time, carrier, or cost.
+
+5️⃣ ⚙️ Settings & Optimization
+
+Users can set budget limits, select cost-saving carriers, and adjust AI preferences.
+
+6️⃣ ☁️ Deployment & Access
+
+Works in cloud & local server.
+
+Real-time updates & notifications for call cost trends.
