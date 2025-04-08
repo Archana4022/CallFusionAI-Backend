@@ -1,51 +1,71 @@
-from fastapi import FastAPI, HTTPException, Query, Response, APIRouter
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware 
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
+from enum import Enum
+from typing import Optional
+from datetime import datetime
 import joblib
 import pandas as pd
 import mysql.connector
-from pydantic import BaseModel
-import uvicorn
-from fastapi.responses import JSONResponse, StreamingResponse
-from datetime import datetime
+from mysql.connector import Error
+from contextlib import closing
 import csv
 import io
-from typing import Optional
-from collections import defaultdict
+import os
+from dotenv import load_dotenv
 
-# Load trained AI model
+# Load environment variables
+load_dotenv()
+
+# Load AI model and expected dummy columns
 model = joblib.load("voip_cost_model.pkl")
 
 # Connect to MySQL database
 db = mysql.connector.connect(
-    host="localhost",
-    user="root",  # Update your MySQL username
-    password="test12",  # Update your MySQL password
-    database="voip_optimizer"
+    host=os.getenv("DB_HOST"),
+    user=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASSWORD"),
+    database=os.getenv("DB_NAME")
 )
-cursor = db.cursor()
 
-# FastAPI app instance
-app = FastAPI(title="AI VOIP Cost Optimizer")
+# FastAPI app
+app = FastAPI(title="CallFusion AI - VOIP Cost Optimizer")
 
-# Allow frontend to access backend (VERY IMPORTANT)
+# CORS (Allow frontend access)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # You can restrict this to your frontend domain later
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Request model for predictions
+@app.get("/")
+def root():
+    return {"message": "Welcome to CallFusion AI VOIP Cost Optimizer API"}
+
+# Enums for strict validation
+class CarrierEnum(str, Enum):
+    carrier_a = "Carrier A"
+    carrier_b = "Carrier B"
+    carrier_c = "Carrier C"
+    carrier_d = "Carrier D"
+
+class TimeOfDayEnum(str, Enum):
+    morning = "Morning"
+    afternoon = "Afternoon"
+    evening = "Evening"
+    night = "Night"
+
 class CallData(BaseModel):
     caller_id: str
     receiver_id: str
     duration: int
-    carrier: str
+    carrier: CarrierEnum
     latency: float
-    time_of_day: str
+    time_of_day: TimeOfDayEnum
 
-# ✅ Correct Route
 @app.post("/predict-cost/")
 async def predict_cost(call: CallData):
     try:
@@ -55,25 +75,23 @@ async def predict_cost(call: CallData):
             "Latency (ms)": call.latency,
             "Time of Day": call.time_of_day
         }])
-
         input_data = pd.get_dummies(input_data)
+
         predicted_cost = model.predict(input_data)[0]
 
-        query = """INSERT INTO call_logs (caller_id, receiver_id, duration, carrier, latency, time_of_day, predicted_cost)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)"""
-        values = (call.caller_id, call.receiver_id, call.duration, call.carrier, call.latency, call.time_of_day, predicted_cost)
-        cursor.execute(query, values)
-        db.commit()
+        with closing(db.cursor()) as cursor:
+            query = """
+                INSERT INTO call_logs (caller_id, receiver_id, duration, carrier, latency, time_of_day, predicted_cost)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """
+            values = (call.caller_id, call.receiver_id, call.duration, call.carrier, call.latency, call.time_of_day, predicted_cost)
+            cursor.execute(query, values)
+            db.commit()
 
         return {"predicted_cost": round(predicted_cost, 2)}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    
-# Suggestion schema (for clean return)
-class Suggestion(BaseModel):
-    suggestion: str
-    estimated_cost: float
 
 @app.post("/suggest-optimizations/")
 async def suggest_optimizations(call: CallData):
@@ -88,7 +106,7 @@ async def suggest_optimizations(call: CallData):
         suggestions = []
 
         # Try other carriers
-        for carrier in ["Carrier A", "Carrier B", "Carrier C", "Carrier D"]:
+        for carrier in CarrierEnum:
             if carrier != call.carrier:
                 temp = base_input.copy()
                 temp["Carrier"] = carrier
@@ -100,7 +118,7 @@ async def suggest_optimizations(call: CallData):
                 })
 
         # Try different times of day
-        for tod in ["Morning", "Afternoon", "Evening", "Night"]:
+        for tod in TimeOfDayEnum:
             if tod != call.time_of_day:
                 temp = base_input.copy()
                 temp["Time of Day"] = tod
@@ -111,9 +129,7 @@ async def suggest_optimizations(call: CallData):
                     "estimated_cost": round(cost, 2)
                 })
 
-        # Return top 3 suggestions sorted by lowest cost
         sorted_suggestions = sorted(suggestions, key=lambda x: x["estimated_cost"])[:3]
-
         return {"optimizations": sorted_suggestions}
 
     except Exception as e:
@@ -130,97 +146,96 @@ def get_call_history(
     end_date: Optional[str] = Query(default=None, description="Filter by end date (YYYY-MM-DD)"),
     format: str = Query(default="json", description="Return format: 'json' or 'csv'")
 ):
-    # Allowed fields to sort
-    sort_field_map = {
-        "duration": "duration",
-        "predicted_cost": "predicted_cost",
-        "id": "id"
-    }
-    sort_field = sort_field_map.get(sort_by, "id")
-    order = "ASC" if order.lower() == "asc" else "DESC"
+    try:
+        sort_field_map = {
+            "duration": "duration",
+            "predicted_cost": "predicted_cost",
+            "id": "id"
+        }
 
-    # SQL base
-    base_query = """
-        SELECT caller_id, receiver_id, duration, carrier, latency, time_of_day, predicted_cost, created_at
-        FROM call_logs
-        WHERE (caller_id LIKE %s OR carrier LIKE %s)
-    """
+        if sort_by not in sort_field_map:
+            raise HTTPException(status_code=400, detail="Invalid sort_by value")
 
-    filters = []
-    params = [f"%{search}%", f"%{search}%"]
+        order = "ASC" if order.lower() == "asc" else "DESC"
+        sort_field = sort_field_map[sort_by]
 
-    # Add optional filters
-    if start_date:
-        filters.append("DATE(created_at) >= %s")
-        params.append(start_date)
-    if end_date:
-        filters.append("DATE(created_at) <= %s")
-        params.append(end_date)
+        query = """
+            SELECT caller_id, receiver_id, duration, carrier, latency, time_of_day, predicted_cost, created_at
+            FROM call_logs
+            WHERE (caller_id LIKE %s OR carrier LIKE %s)
+        """
+        params = [f"%{search}%", f"%{search}%"]
 
-    # Append filters if any
-    if filters:
-        base_query += " AND " + " AND ".join(filters)
+        if start_date:
+            query += " AND DATE(created_at) >= %s"
+            params.append(start_date)
+        if end_date:
+            query += " AND DATE(created_at) <= %s"
+            params.append(end_date)
 
-    # Final sort + pagination
-    base_query += f" ORDER BY {sort_field} {order} LIMIT %s OFFSET %s"
-    params.extend([limit, offset])
+        query += f" ORDER BY {sort_field} {order} LIMIT %s OFFSET %s"
+        params.extend([limit, offset])
 
-    cursor.execute(base_query, tuple(params))
-    rows = cursor.fetchall()
-    columns = ["caller_id", "receiver_id", "duration", "carrier", "latency", "time_of_day", "predicted_cost", "created_at"]
-    results = [dict(zip(columns, row)) for row in rows]
+        with closing(db.cursor()) as cursor:
+            cursor.execute(query, tuple(params))
+            rows = cursor.fetchall()
 
-    if not results:
-        return JSONResponse(content={"message": "No calls found."}, status_code=200)
+        columns = ["caller_id", "receiver_id", "duration", "carrier", "latency", "time_of_day", "predicted_cost", "created_at"]
+        results = [dict(zip(columns, row)) for row in rows]
 
-    # 📥 Export to CSV
-    if format == "csv":
-        output = io.StringIO()
-        writer = csv.DictWriter(output, fieldnames=columns)
-        writer.writeheader()
-        writer.writerows(results)
-        output.seek(0)
-        return StreamingResponse(output, media_type="text/csv", headers={
-            "Content-Disposition": "attachment; filename=call_history.csv"
-        })
+        if not results:
+            return JSONResponse(content={"message": "No call records found."}, status_code=200)
 
-    # ✅ Return JSON by default
-    return results
+        if format == "csv":
+            output = io.StringIO()
+            writer = csv.DictWriter(output, fieldnames=columns)
+            writer.writeheader()
+            writer.writerows(results)
+            output.seek(0)
+            return StreamingResponse(output, media_type="text/csv", headers={
+                "Content-Disposition": "attachment; filename=call_history.csv"
+            })
+
+        return results
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/analytics")
 def get_analytics():
-    # 1. Cost Trend Over Time (daily total cost)
-    cursor.execute("""
-        SELECT DATE(created_at) as day, SUM(predicted_cost) as total_cost
-        FROM call_logs
-        GROUP BY day
-        ORDER BY day ASC
-    """)
-    cost_trend = [{"date": str(row[0]), "total_cost": float(row[1])} for row in cursor.fetchall()]
+    try:
+        with closing(db.cursor()) as cursor:
+            # 1. Cost trend over time
+            cursor.execute("""
+                SELECT DATE(created_at), SUM(predicted_cost)
+                FROM call_logs
+                GROUP BY DATE(created_at)
+                ORDER BY DATE(created_at) ASC
+            """)
+            cost_trend = [{"date": str(row[0]), "total_cost": float(row[1])} for row in cursor.fetchall()]
 
-    # 2. Latency Heatmap: Average latency by time_of_day
-    cursor.execute("""
-        SELECT time_of_day, AVG(latency) as avg_latency
-        FROM call_logs
-        GROUP BY time_of_day
-    """)
-    latency_heatmap = [{"time_of_day": row[0], "avg_latency": float(row[1])} for row in cursor.fetchall()]
+            # 2. Latency heatmap
+            cursor.execute("""
+                SELECT time_of_day, AVG(latency)
+                FROM call_logs
+                GROUP BY time_of_day
+            """)
+            latency_heatmap = [{"time_of_day": row[0], "avg_latency": float(row[1])} for row in cursor.fetchall()]
 
-    # 3. Duration vs Cost Scatter Data
-    cursor.execute("""
-        SELECT duration, predicted_cost
-        FROM call_logs
-    """)
-    scatter_data = [{"duration": int(row[0]), "cost": float(row[1])} for row in cursor.fetchall()]
+            # 3. Duration vs Cost
+            cursor.execute("SELECT duration, predicted_cost FROM call_logs")
+            scatter_data = [{"duration": row[0], "cost": float(row[1])} for row in cursor.fetchall()]
 
-    return JSONResponse(content={
-        "cost_trend": cost_trend,
-        "latency_heatmap": latency_heatmap,
-        "scatter_data": scatter_data
-    })
+        return JSONResponse(content={
+            "cost_trend": cost_trend,
+            "latency_heatmap": latency_heatmap,
+            "scatter_data": scatter_data
+        })
 
-    
-# Run FastAPI
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Run FastAPI locally
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=10000, reload=True)
-
+    import uvicorn
+    uvicorn.run("app:app", host="0.0.0.0", port=10000, reload=True)

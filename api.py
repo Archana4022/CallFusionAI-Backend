@@ -26,24 +26,11 @@ cursor = db.cursor()
 load_dotenv()
 
 # Get database connection details
-MYSQL_HOST = os.getenv("MYSQL_HOST")
-MYSQL_PORT = os.getenv("MYSQL_PORT")
-MYSQL_USER = os.getenv("MYSQL_USER")
-MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
-MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
-
-# Connect to the database
-try:
-    db = mysql.connector.connect(
-        host="localhost",
-        port=3306,
-        user="root",
-        password="test12",
-        database="voip_optimizer"
-    )
-    print("Successfully connected to the database!")
-except mysql.connector.Error as err:
-    print(f"Error: {err}")
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_DATABASE = os.getenv("DB_DATABASE")
 
 # Load the trained model
 try:
