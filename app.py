@@ -106,7 +106,7 @@ async def suggest_optimizations(call: CallData):
         suggestions = []
 
         # Try other carriers
-        for carrier in CarrierEnum:
+        for carrier in ["Carrier A", "Carrier B", "Carrier C", "Carrier D"]:
             if carrier != call.carrier:
                 temp = base_input.copy()
                 temp["Carrier"] = carrier
@@ -118,7 +118,7 @@ async def suggest_optimizations(call: CallData):
                 })
 
         # Try different times of day
-        for tod in TimeOfDayEnum:
+        for tod in ["Morning", "Afternoon", "Evening", "Night"]:
             if tod != call.time_of_day:
                 temp = base_input.copy()
                 temp["Time of Day"] = tod
@@ -129,11 +129,14 @@ async def suggest_optimizations(call: CallData):
                     "estimated_cost": round(cost, 2)
                 })
 
+        # Return top 3 suggestions sorted by lowest cost
         sorted_suggestions = sorted(suggestions, key=lambda x: x["estimated_cost"])[:3]
+
         return {"optimizations": sorted_suggestions}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/call-history")
 def get_call_history(
