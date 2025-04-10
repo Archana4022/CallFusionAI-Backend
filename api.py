@@ -103,40 +103,44 @@ async def predict_cost(data: CallData):
 @app.post("/suggest-optimizations/")
 async def suggest_optimizations(call: CallData):
     try:
-        base_input = {
-            "Duration (s)": call.duration,
-            "Latency (ms)": call.latency,
-            "Carrier": call.carrier,
-            "Time of Day": call.time_of_day
-        }
-
         suggestions = []
 
-        # Try other carriers
-        for carrier in ["Carrier A", "Carrier B", "Carrier C", "Carrier D"]:
+        for carrier in valid_carriers:
             if carrier != call.carrier:
-                temp = base_input.copy()
-                temp["Carrier"] = carrier
-                temp_df = pd.get_dummies(pd.DataFrame([temp]))
-                cost = model.predict(temp_df)[0]
+                df = pd.DataFrame([{
+                    "Duration (s)": call.duration,
+                    "Latency (ms)": call.latency,
+                    "Carrier_Carrier B": 1 if carrier == "Carrier B" else 0,
+                    "Carrier_Carrier C": 1 if carrier == "Carrier C" else 0,
+                    "Carrier_Carrier D": 1 if carrier == "Carrier D" else 0,
+                    "Time of Day_Evening": 1 if call.time_of_day == "Evening" else 0,
+                    "Time of Day_Morning": 1 if call.time_of_day == "Morning" else 0,
+                    "Time of Day_Night": 1 if call.time_of_day == "Night" else 0,
+                }])
+                cost = model.predict(df)[0]
                 suggestions.append({
                     "suggestion": f"Try using {carrier}",
                     "estimated_cost": round(cost, 2)
                 })
 
-        # Try different times of day
-        for tod in ["Morning", "Afternoon", "Evening", "Night"]:
+        for tod in valid_times:
             if tod != call.time_of_day:
-                temp = base_input.copy()
-                temp["Time of Day"] = tod
-                temp_df = pd.get_dummies(pd.DataFrame([temp]))
-                cost = model.predict(temp_df)[0]
+                df = pd.DataFrame([{
+                    "Duration (s)": call.duration,
+                    "Latency (ms)": call.latency,
+                    "Carrier_Carrier B": 1 if call.carrier == "Carrier B" else 0,
+                    "Carrier_Carrier C": 1 if call.carrier == "Carrier C" else 0,
+                    "Carrier_Carrier D": 1 if call.carrier == "Carrier D" else 0,
+                    "Time of Day_Evening": 1 if tod == "Evening" else 0,
+                    "Time of Day_Morning": 1 if tod == "Morning" else 0,
+                    "Time of Day_Night": 1 if tod == "Night" else 0,
+                }])
+                cost = model.predict(df)[0]
                 suggestions.append({
                     "suggestion": f"Try calling in the {tod}",
                     "estimated_cost": round(cost, 2)
                 })
 
-        # Return top 3 suggestions sorted by lowest cost
         sorted_suggestions = sorted(suggestions, key=lambda x: x["estimated_cost"])[:3]
 
         return {"optimizations": sorted_suggestions}
